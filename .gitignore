@@ -1,0 +1,11 @@
+bin/
+obj/
+dist/
+.vs/
+*.user
+TestResults/
+
+# The emulator's data folder holds a copy of production data, local changes and encrypted credentials.
+# Never commit it.
+data/
+**/data/

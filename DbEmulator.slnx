@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/DbEmulator.Query/DbEmulator.Query.csproj" />
+    <Project Path="src/DbEmulator/DbEmulator.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/DbEmulator.Query.Tests/DbEmulator.Query.Tests.csproj" />
+    <Project Path="tests/DbEmulator.Tests/DbEmulator.Tests.csproj" />
+  </Folder>
+</Solution>

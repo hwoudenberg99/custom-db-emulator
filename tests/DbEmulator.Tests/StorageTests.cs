@@ -1,4 +1,4 @@
-﻿using System.Reflection;
+using System.Reflection;
 using System.Text.Json;
 using DbEmulator.Storage;
 
@@ -55,7 +55,7 @@ public class StorageTests
         var single = PartitionKeyDefinition.FromContainer(Json.Parse("""{"partitionKey":{"paths":["/pk"],"kind":"Hash","version":2}}"""));
         var values = new[]
         {
-            "\"a\"", "\"\"", "\"t1\"", "\"hello world, a longer value that spans several 16-byte blocks\"", "\"ünïcødé 😀\"",
+            "\"a\"", "\"\"", "\"t1\"", "\"hello world, a longer value that spans several 16-byte blocks\"", "\"�n�c�d� ??\"",
             "0", "1", "-1.5", "12345678901234", "3.14159", "true", "false", "null",
         };
         foreach (var value in values)
@@ -139,6 +139,16 @@ public class StorageTests
         }
     }
 
+    [Fact]
+    public void Json_output_keeps_text_verbatim_and_escapes_only_what_json_requires()
+    {
+        var source = Json.Parse("""{"a":"héllo <wörld> & 😀 ü\"q\\b\t\n\u0001"}""");
+        var text = System.Text.Encoding.UTF8.GetString(Json.ToUtf8(source));
+        Assert.Contains("héllo <wörld> & 😀 ü", text, StringComparison.Ordinal);
+        Assert.Contains("\\\"q\\\\b\\t\\n\\u0001", text, StringComparison.Ordinal);
+        Assert.Equal(source.GetProperty("a").GetString(), Json.Parse(text).GetProperty("a").GetString());
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -173,10 +183,10 @@ public class StorageTests
             var (_, container, _) = store.CreateContainer(db!, Json.Parse("""{"id":"c/x?","partitionKey":{"paths":["/pk"],"kind":"Hash","version":2}}"""));
             Assert.Null(container);
 
-            (_, container, _) = store.CreateContainer(db!, Json.Parse("""{"id":"Items: Ã¼nÃ¯cÃ¸dÃ©","partitionKey":{"paths":["/pk"],"kind":"Hash","version":2}}"""));
+            (_, container, _) = store.CreateContainer(db!, Json.Parse("""{"id":"Items: ünïcødé","partitionKey":{"paths":["/pk"],"kind":"Hash","version":2}}"""));
             for (var i = 0; i < 100; i++)
             {
-                container!.Create(Json.Parse($$"""{"id":"{{i}}","pk":"p{{i % 3}}","big":12345678901234567890,"text":"hÃ©llo <&> {{i}}"}"""), null);
+                container!.Create(Json.Parse($$"""{"id":"{{i}}","pk":"p{{i % 3}}","big":12345678901234567890,"text":"héllo <&> {{i}}"}"""), null);
             }
 
             container!.StoredProcedures.Write(Json.Parse("""{"id":"sp","body":"function () {}"}"""), null);
@@ -190,7 +200,7 @@ public class StorageTests
 
                 var loaded = new DocumentStore();
                 await SnapshotReader.LoadAsync(target, loaded, null, CancellationToken.None);
-                var copy = loaded.FindDatabase("db")!.FindContainer("Items: Ã¼nÃ¯cÃ¸dÃ©")!;
+                var copy = loaded.FindDatabase("db")!.FindContainer("Items: ünïcødé")!;
                 Assert.Equal(100, copy.Count);
                 Assert.Equal(container.Rid, copy.Rid);
                 Assert.Single(copy.StoredProcedures.All);

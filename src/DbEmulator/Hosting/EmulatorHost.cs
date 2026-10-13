@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using DbEmulator.Gateway;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -12,7 +12,7 @@ namespace DbEmulator.Hosting;
 /// <summary>Builds the web host: the Cosmos gateway plus the /_emulator status pages, bound to localhost only.</summary>
 internal static class EmulatorHost
 {
-    public static (WebApplication App, CosmosGateway Gateway) Build(EmulatorRuntime runtime, CertificateInfo? certificate)
+    public static (WebApplication App, CosmosGateway Gateway) Build(EmulatorRuntime runtime, CertificateInfo? certificate, App.AppBridge? bridge = null)
     {
         var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions
         {
@@ -75,7 +75,7 @@ internal static class EmulatorHost
             await next(context);
         });
 
-        StatusEndpoints.Map(app, runtime, gateway);
+        StatusEndpoints.Map(app, runtime, gateway, bridge);
 
         app.Run(async context =>
         {

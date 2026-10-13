@@ -1,0 +1,8 @@
+﻿<Project>
+  <!-- The WebView2 package always references its WPF control; DbEmulator only uses WinForms. -->
+  <Target Name="RemoveWebView2Wpf" BeforeTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <Reference Remove="@(Reference)" Condition="'%(Filename)' == 'Microsoft.Web.WebView2.Wpf'" />
+    </ItemGroup>
+  </Target>
+</Project>

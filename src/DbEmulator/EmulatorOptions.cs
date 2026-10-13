@@ -1,4 +1,4 @@
-namespace DbEmulator;
+﻿namespace DbEmulator;
 
 /// <summary>Settings from appsettings.json (next to the exe) and DBEMULATOR_* environment variables.</summary>
 public sealed class EmulatorOptions
@@ -10,6 +10,15 @@ public sealed class EmulatorOptions
     public StorageOptions Storage { get; set; } = new();
 
     public FetchOptions Fetch { get; set; } = new();
+
+    public AppOptions App { get; set; } = new();
+}
+
+/// <summary>Window behaviour of the desktop app.</summary>
+public sealed class AppOptions
+{
+    /// <summary>Closing the window keeps DbEmulator running in the system tray (your app still needs it).</summary>
+    public bool CloseToTray { get; set; } = true;
 }
 
 /// <summary>The live Azure Cosmos DB account to copy from. It is only ever read.</summary>
@@ -69,8 +78,8 @@ public sealed class StorageOptions
     /// <summary>How many fetched snapshots to keep (0 = keep all).</summary>
     public int KeepSnapshots { get; set; } = 10;
 
-    /// <summary>Gzip the documents files of snapshots.</summary>
-    public bool CompressSnapshots { get; set; } = true;
+    /// <summary>Gzip the documents files of snapshots (off: plain, readable documents.jsonl files).</summary>
+    public bool CompressSnapshots { get; set; }
 }
 
 public sealed class FetchOptions

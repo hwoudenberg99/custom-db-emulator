@@ -1,62 +1,128 @@
 using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using DbEmulator;
+using DbEmulator.App;
+using DbEmulator.Gui;
 using DbEmulator.Hosting;
 using DbEmulator.Ui;
-using Microsoft.Extensions.Configuration;
-
-return await Program.RunAsync(args);
 
 internal static partial class Program
 {
-    public static async Task<int> RunAsync(string[] args)
+    [STAThread]
+    public static int Main(string[] args)
     {
-        Console.OutputEncoding = Encoding.UTF8;
         var cli = CommandLine.Parse(args);
+        if (cli.Help || cli.FetchOnly || cli.Headless)
+        {
+            // Print to the terminal this was started from (the exe is a Windows app without its own console).
+            AttachConsole(-1);
+        }
+        else if (cli.Console)
+        {
+            AllocConsole();
+        }
+
         if (cli.Help)
         {
             PrintHelp();
             return 0;
         }
 
-        var baseDirectory = AppContext.BaseDirectory;
-        var options = LoadOptions(baseDirectory);
-        if (cli.Port is { } port)
-        {
-            options.Server.Port = port;
-        }
-
-        if (cli.DataDirectory is { } dataOverride)
-        {
-            options.Storage.DataDirectory = dataOverride;
-        }
-
-        var dataDirectory = Path.GetFullPath(Path.Combine(baseDirectory, options.Storage.DataDirectory));
-        if (!Path.IsPathRooted(options.Storage.DataDirectory) && !IsWritable(dataDirectory))
-        {
-            // e.g. the exe lives under Program Files
-            dataDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DbEmulator", options.Storage.DataDirectory);
-        }
+        var (options, dataDirectory) = OptionsLoader.Load(AppContext.BaseDirectory, cli.DataDirectory, cli.Port);
 
         // One emulator per data folder, machine-wide (a scheduled --fetch-only runs in another session).
         using var instance = new Mutex(initiallyOwned: true, $"Global\\DbEmulator-{Hash(dataDirectory)}", out var firstInstance);
         if (!firstInstance)
         {
-            Console.Error.WriteLine($"Another DbEmulator is already running with the data folder {dataDirectory}." +
-                (cli.FetchOnly ? " Fetch from there (press F), or schedule --fetch-only when it is not running." : string.Empty));
-            Pause();
+            if (cli.Desktop && SingleInstance.SignalShow(dataDirectory))
+            {
+                return 0; // the running app comes to the front
+            }
+
+            var message = $"Another DbEmulator is already running with the data folder {dataDirectory}." +
+                (cli.FetchOnly ? " Fetch from there, or schedule --fetch-only when it is not running." : string.Empty);
+            if (cli.Desktop)
+            {
+                MessageBox.Show(message, "DbEmulator", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            else
+            {
+                Console.Error.WriteLine(message);
+                Pause();
+            }
+
             return 2;
         }
 
-        var ui = new ConsoleDashboard();
-        using var runtime = new EmulatorRuntime(options, dataDirectory, ui);
-
         if (cli.FetchOnly)
         {
-            return await FetchOnlyAsync(runtime, ui);
+            return Run(() => FetchOnlyAsync(options, dataDirectory));
         }
 
+        if (cli.Console)
+        {
+            return Run(() => RunConsoleAsync(cli, options, dataDirectory));
+        }
+
+        if (cli.Headless)
+        {
+            return Run(() => RunHeadlessAsync(options, dataDirectory));
+        }
+
+        return RunDesktop(options, dataDirectory);
+    }
+
+    // ------------------------------------------------------------------ desktop app
+
+    private static int RunDesktop(EmulatorOptions options, string dataDirectory)
+    {
+        Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
+        Application.EnableVisualStyles();
+        Application.SetCompatibleTextRenderingDefault(false);
+        var controller = new AppController(options, dataDirectory);
+        using (var form = new MainForm(controller))
+        {
+            using var listener = SingleInstance.Listen(dataDirectory, form.ShowFromTray);
+            Application.Run(form);
+        }
+
+        // Off the UI thread: its synchronization context no longer pumps messages.
+        Task.Run(() => controller.DisposeAsync().AsTask()).GetAwaiter().GetResult();
+        return 0;
+    }
+
+    /// <summary>The app without a window (the same screens are available at /_emulator/ in a browser).</summary>
+    private static async Task<int> RunHeadlessAsync(EmulatorOptions options, string dataDirectory)
+    {
+        await using var controller = new AppController(options, dataDirectory);
+        using var stop = new CancellationTokenSource();
+        Console.CancelKeyPress += (_, e) =>
+        {
+            e.Cancel = true;
+            stop.Cancel();
+        };
+        await controller.StartAsync();
+        Console.WriteLine($"DbEmulator is running without a window: {controller.Server.Endpoint}_emulator/  (Ctrl+C stops it)");
+        try
+        {
+            await Task.Delay(Timeout.Infinite, stop.Token);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+
+        return 0;
+    }
+
+    // ------------------------------------------------------------------ console mode
+
+    private static async Task<int> RunConsoleAsync(CommandLine cli, EmulatorOptions options, string dataDirectory)
+    {
+        Console.OutputEncoding = Encoding.UTF8;
+        var ui = new ConsoleDashboard();
+        using var runtime = new EmulatorRuntime(options, dataDirectory, ui);
         ui.Info("Loading the local copy...");
         await runtime.InitializeAsync();
 
@@ -97,7 +163,7 @@ internal static partial class Program
                 await ui.FetchAsync(confirm: false, stop.Token);
             }
         }
-        else if (source is not null && (cli.Fetch || IsDue(runtime, options.Fetch.OnStartupIfOlderThanHours)))
+        else if (source is not null && (cli.Fetch || FetchSchedule.IsDue(runtime, options.Fetch.OnStartupIfOlderThanHours)))
         {
             await ui.FetchAsync(confirm: false, stop.Token);
         }
@@ -114,18 +180,20 @@ internal static partial class Program
         return 0;
     }
 
-    private static async Task<int> FetchOnlyAsync(EmulatorRuntime runtime, ConsoleDashboard ui)
+    private static async Task<int> FetchOnlyAsync(EmulatorOptions options, string dataDirectory)
     {
+        var ui = new ConsoleDashboard();
+        using var runtime = new EmulatorRuntime(options, dataDirectory, ui);
         if (runtime.ResolveSource(out _) is null)
         {
-            ui.Error("No source account configured. Run DbEmulator.exe once interactively (press K) or set DBEMULATOR_SOURCE_CONNECTION_STRING.");
+            ui.Error("No source account configured. Set it up in the app first, or set DBEMULATOR_SOURCE_CONNECTION_STRING.");
             return 1;
         }
 
         try
         {
             // A backup only: the working copy (and the developer's local changes) is left alone. The next
-            // interactive start offers to switch to it.
+            // start offers to switch to it.
             var snapshot = await runtime.FetchAsync(activate: false);
             ui.Success($"Fetched {snapshot.Manifest.TotalDocuments:N0} documents into {snapshot.Path}.");
             return 0;
@@ -150,31 +218,12 @@ internal static partial class Program
                 return;
             }
 
-            if (!runtime.IsFetching && IsDue(runtime, everyHours))
+            if (!runtime.IsFetching && FetchSchedule.IsDue(runtime, everyHours))
             {
                 ui.Info($"Automatic fetch (every {everyHours} h, see Fetch:AutoFetchEveryHours).");
                 await ui.FetchAsync(confirm: false, cancellationToken);
             }
         }
-    }
-
-    private static bool IsDue(EmulatorRuntime runtime, double olderThanHours)
-    {
-        if (olderThanHours <= 0)
-        {
-            return false;
-        }
-
-        var last = runtime.LastFetch;
-        if (last is not null && DateTimeOffset.UtcNow - last.Manifest.CompletedUtc <= TimeSpan.FromHours(olderThanHours))
-        {
-            return false;
-        }
-
-        // After a failed attempt wait before retrying, so a persistent error never turns into a stream of full
-        // reads against the live account.
-        return runtime.State.LastAttempt is not { Succeeded: false } failed
-            || DateTimeOffset.UtcNow - failed.StartedUtc > TimeSpan.FromHours(Math.Min(olderThanHours, 1));
     }
 
     /// <summary>A newer backup than the one being served exists (e.g. from a scheduled --fetch-only): offer it.</summary>
@@ -203,33 +252,9 @@ internal static partial class Program
         }
     }
 
-    private static EmulatorOptions LoadOptions(string baseDirectory)
-    {
-        var configuration = new ConfigurationBuilder()
-            .SetBasePath(baseDirectory)
-            .AddJsonFile("appsettings.json", optional: true)
-            .AddEnvironmentVariables("DBEMULATOR_")
-            .Build();
-        var options = new EmulatorOptions();
-        configuration.Bind(options);
-        return options;
-    }
+    // ------------------------------------------------------------------ helpers
 
-    private static bool IsWritable(string directory)
-    {
-        try
-        {
-            Directory.CreateDirectory(directory);
-            var probe = Path.Combine(directory, $".write-test-{Environment.ProcessId}");
-            File.WriteAllText(probe, string.Empty);
-            File.Delete(probe);
-            return true;
-        }
-        catch (Exception e) when (e is UnauthorizedAccessException or IOException)
-        {
-            return false;
-        }
-    }
+    private static int Run(Func<Task<int>> body) => Task.Run(body).GetAwaiter().GetResult();
 
     private static string Hash(string value) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value.ToUpperInvariant())))[..16];
@@ -246,27 +271,38 @@ internal static partial class Program
     private static void PrintHelp()
     {
         Console.WriteLine("""
+
             DbEmulator - local, read-only mirror of Azure Cosmos DB for development.
 
             Usage: DbEmulator.exe [options]
 
-              --fetch          fetch a fresh copy at startup, then serve it
-              --fetch-only     fetch a fresh copy and exit (for Task Scheduler); exit code 0 = success
-              --port <n>       listen on another port (default 8081, see appsettings.json)
+              (no options)     open the DbEmulator app
+              --console        run in a console window instead of the app
+              --headless       run without any window (the app's screens are at https://localhost:8081/_emulator/)
+              --fetch          fetch a fresh copy at startup (console mode)
+              --fetch-only     save a fresh backup and exit (for Task Scheduler); exit code 0 = success
+              --port <n>       listen on another port (default 8081)
               --data <folder>  use another data folder (default: data next to the exe)
               --help           this text
 
-            Settings live in appsettings.json next to the exe and can be overridden with
+            Settings: in the app (Settings), or appsettings.json next to the exe, or
             DBEMULATOR_<Section>__<Key> environment variables (e.g. DBEMULATOR_Server__Port=9000).
-            The source connection string can also come from DBEMULATOR_SOURCE_CONNECTION_STRING.
             """);
     }
 
-    private sealed record CommandLine(bool Help, bool Fetch, bool FetchOnly, int? Port, string? DataDirectory)
+    [DllImport("kernel32.dll")]
+    private static extern bool AttachConsole(int processId);
+
+    [DllImport("kernel32.dll")]
+    private static extern bool AllocConsole();
+
+    private sealed record CommandLine(bool Help, bool Fetch, bool FetchOnly, bool Console, bool Headless, int? Port, string? DataDirectory)
     {
+        public bool Desktop => !FetchOnly && !Console && !Headless;
+
         public static CommandLine Parse(string[] args)
         {
-            bool help = false, fetch = false, fetchOnly = false;
+            bool help = false, fetch = false, fetchOnly = false, console = false, headless = false;
             int? port = null;
             string? data = null;
             for (var i = 0; i < args.Length; i++)
@@ -282,6 +318,12 @@ internal static partial class Program
                     case "--fetch-only":
                         fetchOnly = true;
                         break;
+                    case "--console":
+                        console = true;
+                        break;
+                    case "--headless":
+                        headless = true;
+                        break;
                     case "--port" when i + 1 < args.Length && int.TryParse(args[i + 1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var p):
                         port = p;
                         i++;
@@ -295,7 +337,8 @@ internal static partial class Program
                 }
             }
 
-            return new CommandLine(help, fetch, fetchOnly, port, data);
+            // --fetch is a console-mode option.
+            return new CommandLine(help, fetch, fetchOnly, console || (fetch && !fetchOnly && !headless), headless, port, data);
         }
     }
 }

@@ -6,15 +6,15 @@ namespace DbEmulator.Storage;
 
 internal static class Json
 {
-    /// <summary>Writer options matching Cosmos output: raw UTF-8, no HTML/non-ASCII escaping.</summary>
+    /// <summary>Writer options matching Cosmos output: raw UTF-8 (including emoji), only JSON's mandatory escapes.</summary>
     public static readonly JsonWriterOptions WriterOptions = new()
     {
-        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        Encoder = MinimalJsonEncoder.Instance,
     };
 
     public static readonly JsonWriterOptions IndentedWriterOptions = new()
     {
-        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        Encoder = MinimalJsonEncoder.Instance,
         Indented = true,
     };
 

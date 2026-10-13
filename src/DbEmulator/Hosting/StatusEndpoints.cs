@@ -1,4 +1,5 @@
 using System.Text.Json;
+using DbEmulator.App;
 using DbEmulator.Gateway;
 using DbEmulator.Storage;
 using Microsoft.AspNetCore.Builder;
@@ -6,15 +7,56 @@ using Microsoft.AspNetCore.Http;
 
 namespace DbEmulator.Hosting;
 
-/// <summary>Plain status API and a small web page under /_emulator (not part of the Cosmos protocol).</summary>
+/// <summary>Status API and the app's web UI under /_emulator (not part of the Cosmos protocol).</summary>
 internal static class StatusEndpoints
 {
-    public static void Map(WebApplication app, EmulatorRuntime runtime, CosmosGateway gateway)
+    public static void Map(WebApplication app, EmulatorRuntime runtime, CosmosGateway gateway, AppBridge? bridge)
     {
         app.MapGet("/_emulator/status", (HttpContext context) =>
             Results.Json(StatusModel.Build(runtime, gateway, BaseUrl(context)), Json.SerializerOptions));
 
-        app.MapGet("/_emulator", () => Results.Content(StatusPage.Html, "text/html; charset=utf-8"));
+        // The same screens as the desktop app, in a browser.
+        app.MapGet("/_emulator/{**file}", (HttpContext context, string? file) =>
+        {
+            if (string.IsNullOrEmpty(file) && !(context.Request.Path.Value ?? string.Empty).EndsWith('/'))
+            {
+                return Results.Redirect("/_emulator/");
+            }
+
+            return UiAssets.TryGet(file ?? string.Empty, out var content, out var type)
+                ? Results.Bytes(content, type)
+                : Results.NotFound();
+        });
+
+        app.MapPost("/_emulator/api/rpc", async (HttpContext context) =>
+        {
+            if (!IsTrustedAction(context))
+            {
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
+            }
+
+            if (bridge is null)
+            {
+                return Results.NotFound(new { error = "The app API is not available in this mode." });
+            }
+
+            var body = await JsonSerializer.DeserializeAsync<JsonElement>(context.Request.Body);
+            var method = body.GetString("method") ?? string.Empty;
+            var args = body.TryGetProperty("params", out var p) ? p : default;
+            try
+            {
+                var result = await bridge.InvokeAsync(method, args, fromDesktop: false, context.RequestAborted);
+                return Results.Json(new { result }, Json.SerializerOptions);
+            }
+            catch (BridgeException e)
+            {
+                return Results.Json(new { error = e.Message }, Json.SerializerOptions, statusCode: StatusCodes.Status400BadRequest);
+            }
+            catch (Exception e) when (e is InvalidOperationException or ArgumentException or IOException)
+            {
+                return Results.Json(new { error = e.Message }, Json.SerializerOptions, statusCode: StatusCodes.Status400BadRequest);
+            }
+        });
 
         app.MapPost("/_emulator/api/fetch", (HttpContext context) =>
         {

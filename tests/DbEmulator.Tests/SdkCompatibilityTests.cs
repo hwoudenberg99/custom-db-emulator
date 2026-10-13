@@ -1,4 +1,4 @@
-﻿using System.Net;
+using System.Net;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Cosmos.Linq;
 using Newtonsoft.Json;
@@ -224,14 +224,14 @@ public class SdkCompatibilityTests : IClassFixture<EmulatorFixture>
     public async Task Large_numbers_and_unicode_round_trip_verbatim()
     {
         var container = await NewContainerAsync();
-        const string Body = """{"id":"n1","pk":"a","big":12345678901234567890,"precise":0.1000000000000000055511151231257827,"text":"hÃ©llo <wÃ¶rld> & ðŸ˜€"}""";
+        const string Body = """{"id":"n1","pk":"a","big":12345678901234567890,"precise":0.1000000000000000055511151231257827,"text":"héllo <wörld> & 😀"}""";
         using var create = await container.CreateItemStreamAsync(new MemoryStream(System.Text.Encoding.UTF8.GetBytes(Body)), new PartitionKey("a"));
         Assert.Equal(HttpStatusCode.Created, create.StatusCode);
         using var read = await container.ReadItemStreamAsync("n1", new PartitionKey("a"));
         var text = await new StreamReader(read.Content).ReadToEndAsync();
         Assert.Contains("\"big\":12345678901234567890", text, StringComparison.Ordinal);
         Assert.Contains("0.1000000000000000055511151231257827", text, StringComparison.Ordinal);
-        Assert.Contains("hÃ©llo <wÃ¶rld> & ðŸ˜€", text, StringComparison.Ordinal);
+        Assert.Contains("héllo <wörld> & 😀", text, StringComparison.Ordinal);
     }
 
     [Fact]

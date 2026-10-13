@@ -1,12 +1,15 @@
 # DbEmulator
 
-A local, **read-only mirror of Azure Cosmos DB** for development.
+[![Latest release](https://img.shields.io/github/v/release/hwoudenberg99/custom-db-emulator)](https://github.com/hwoudenberg99/custom-db-emulator/releases/latest)
 
-`DbEmulator.exe` fetches a copy of your live Cosmos DB account (reading only — it never writes to Azure), keeps
-every fetch on disk as a timestamped **backup**, and serves the copy on `https://localhost:8081` using the Cosmos DB
-protocol, so your app keeps using the normal Microsoft.Azure.Cosmos SDK. It is a normal Windows desktop app: double-click
-it, follow the setup, and it always shows **when the data was last fetched** — in the app, in the window title, in the
-tray icon's tooltip and through a small JSON API.
+**A local, read-only mirror of Azure Cosmos DB for development on Windows.**
+
+DbEmulator copies the data from a live Azure Cosmos DB account to your machine and serves it on
+`https://localhost:8081` using the Cosmos DB protocol. Your application keeps using the standard
+`Microsoft.Azure.Cosmos` SDK; only the connection string changes. Every copy is kept on disk as a timestamped
+backup in plain JSON, and the application always shows when the data was last fetched.
+
+DbEmulator **never writes to Azure**. Writes made by your application are applied to the local copy only.
 
 ```
  Azure Cosmos DB (live)                DbEmulator.exe                                Your app
@@ -17,59 +20,91 @@ tray icon's tooltip and through a small JSON API.
  └──────────────────┘                └──────────────────────────────────────────┘
 ```
 
-## Quick start
+## Contents
 
-1. **Get the exe**: download `DbEmulator.exe` from the
-   [latest release](https://github.com/hwoudenberg99/custom-db-emulator/releases/latest), or build it (needs the
-   .NET 10 SDK; the resulting exe needs nothing else):
+- [Features](#features)
+- [Requirements](#requirements)
+- [Getting started](#getting-started)
+- [Using the application](#using-the-application)
+- [Connecting your application](#connecting-your-application)
+- [Read-only guarantee](#read-only-guarantee)
+- [Data storage and backups](#data-storage-and-backups)
+- [Configuration](#configuration)
+- [Command-line options](#command-line-options)
+- [Compatibility](#compatibility)
+- [Security considerations](#security-considerations)
+- [Building from source](#building-from-source)
 
-   ```powershell
-   .\publish.ps1            # runs the tests, then writes dist\DbEmulator.exe + dist\appsettings.json
-   ```
+## Features
 
-   The window uses Microsoft Edge WebView2, which is part of Windows 10/11. If it is missing, the app says so and
-   links to the installer.
+- **Desktop application** with a guided first-run setup. No installation and no .NET runtime required.
+- **Read-only by design.** Several independent safeguards prevent any write from reaching the live account.
+- **Cosmos DB–compatible endpoint.** Supports the .NET SDK in Gateway mode, including queries, LINQ, patch,
+  transactional batch, bulk execution and change feed.
+- **Backups as plain JSON.** Every fetch is stored as a complete, self-describing snapshot. Any snapshot can be
+  served again at any time.
+- **Data freshness is always visible**: in the application, the window title, the system tray and on every response
+  your application receives.
+- **Local writes.** Your application can create, update and delete documents; changes persist across restarts until
+  you reset them or fetch a new copy.
+- **Built-in data browser** for exploring containers and running SQL queries.
 
-2. **Double-click `DbEmulator.exe`.** A setup guide walks you through the first run:
-   1. **Connect** to the source account, then press *Test connection* (lists the databases using reads only):
-      - **Read-only connection string** (recommended): Azure Portal → your Cosmos DB account → *Settings* → *Keys* →
-        *Read-only Keys* → *PRIMARY READ-ONLY CONNECTION STRING*. It is stored encrypted for your Windows user
-        (`data\source.dat`, DPAPI).
-      - or **Microsoft Entra ID** (your `az login` / Visual Studio sign-in) with the *Cosmos DB Built-in Data Reader*
-        role.
-   2. **Choose** the databases to copy (or all of them).
-   3. **Fetch** the first copy, with live progress.
-   4. **Done**: the guide shows the connection string and C# snippet for your app.
+## Requirements
 
-3. From then on the app opens on **Overview**: when the data was last fetched (and how old it is), a big
-   *Fetch a fresh copy* button, how to connect your app, and how many local changes your app has made.
+- Windows 10 or 11 (x64).
+- Microsoft Edge WebView2 Runtime. It is included with current versions of Windows; if it is missing, DbEmulator
+  says so on start-up and links to the installer.
+- Read access to an Azure Cosmos DB for NoSQL account: a **read-only key** (recommended) or a Microsoft Entra ID
+  identity with the *Cosmos DB Built-in Data Reader* role.
 
-### The app
+## Getting started
 
-| Screen | What it does |
+1. Download `DbEmulator-<version>-win-x64.zip` from the
+   [latest release](https://github.com/hwoudenberg99/custom-db-emulator/releases/latest) and extract it to a folder
+   of your choice. The archive contains `DbEmulator.exe` and `appsettings.json`.
+2. Run `DbEmulator.exe`. On first start, a setup guide walks you through four steps:
+   1. **Connect.** Enter the source account and select **Test connection**, which lists its databases using read
+      requests only.
+      - *Read-only connection string* (recommended): in the Azure portal, open the Cosmos DB account and go to
+        **Settings → Keys → Read-only Keys → Primary read-only connection string**. It is stored encrypted for your
+        Windows user account (`data\source.dat`, Windows DPAPI).
+      - *Microsoft Entra ID*: enter the account endpoint (and optionally the tenant ID); DbEmulator signs in with your
+        existing `az login` or Visual Studio credentials.
+   2. **Choose** the databases to copy, or all of them.
+   3. **Fetch** the first copy. Progress is shown per container.
+   4. **Finish.** The guide displays the connection string and C# configuration for your application.
+3. Point your application at DbEmulator (see [Connecting your application](#connecting-your-application)).
+
+> **Note:** port 8081 is also used by Microsoft's official Azure Cosmos DB Emulator. Stop that emulator, or choose
+> a different port under **Settings → Local server**.
+
+## Using the application
+
+| Page | Purpose |
 |---|---|
-| **Overview** | Last fetch, fetch / cancel with progress, connection string and C# snippet (copy buttons), local changes (reset), what is in the copy |
-| **Data** | Browse databases and containers, run SQL queries (`Ctrl+Enter`) and expand the resulting documents as highlighted JSON |
-| **Backups** | Every fetch, with size and counts: *Serve this copy*, open its folder, delete it |
-| **Activity** | Live log, fetch history (documents, RU, duration) and the request log toggle |
-| **Settings** | Source account, which databases/containers to copy, port, local writes, TTL, how many backups to keep, plain or compressed backups, automatic fetching, close-to-tray |
+| **Overview** | When the data was last fetched and how old it is; start or cancel a fetch; the connection string and C# snippet for your application; the number of local changes, with an option to discard them |
+| **Data** | Browse databases and containers, run SQL queries (`Ctrl+Enter`) and inspect documents as formatted JSON |
+| **Backups** | All stored snapshots with date, document count, container count and size. Serve an earlier snapshot, open its folder or delete it |
+| **Activity** | Live application log, fetch history (documents, request units, duration) and an optional per-request log |
+| **Settings** | Source account, databases to copy, port, local writes, TTL enforcement, backup retention and compression, automatic fetching, tray behaviour |
 
-The window title always reads `DbEmulator — last fetch 2 hours ago`. Closing the window keeps DbEmulator running in
-the **system tray** (so your app keeps working); the tray icon's menu has *Open*, *Fetch a fresh copy* and *Quit*.
-Turn this off under *Settings → Window*. Starting the exe again brings the running window to the front.
+**System tray.** Closing the window keeps DbEmulator running in the notification area so your application stays
+connected. The tray menu provides *Open*, *Fetch a fresh copy* and *Quit*; the tooltip shows the age of the data.
+This behaviour can be turned off under **Settings → Window**.
 
-The same screens are available in a browser at `https://localhost:8081/_emulator/` while DbEmulator runs.
+**Single instance.** One DbEmulator runs per data folder. Starting it again brings the existing window to the front.
 
-## Use it from your .NET app
+**Browser access.** The same interface is available at `https://localhost:8081/_emulator/` while DbEmulator is running.
 
-Point the app at the emulator in development and use **Gateway** connection mode (the emulator speaks the HTTPS
-gateway protocol, not the Direct-mode TCP protocol):
+## Connecting your application
+
+DbEmulator implements the Cosmos DB **Gateway** (HTTPS) protocol. Configure the SDK to use Gateway mode in development:
 
 ```jsonc
 // appsettings.Development.json
 {
   "ConnectionStrings": {
-    // Any key works; this is the well-known emulator key, so existing emulator settings keep working.
+    // Any key is accepted. This is the well-known emulator key, so existing emulator settings continue to work.
     "Cosmos": "AccountEndpoint=https://localhost:8081/;AccountKey=C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==;"
   }
 }
@@ -88,158 +123,172 @@ builder.Services.AddSingleton(_ =>
 });
 ```
 
-- **Certificate**: DbEmulator uses the trusted ASP.NET Core development certificate when it exists
-  (`dotnet dev-certs https --trust`), so no extra settings are needed. Otherwise it creates its own self-signed
-  certificate and the console tells you to add `DisableServerCertificateValidation=True;` to the connection string.
-- **Writes** from your app (creates, upserts, deletes, patches, batches) work and are kept **locally only**. They
-  survive restarts (`data\working\`) until you reset them (*Overview → Local changes*) or fetch a fresh copy.
-- **Know which data you're on**: every Cosmos response carries an `x-dbemulator-data-fetched` header (e.g.
-  `itemResponse.Headers["x-dbemulator-data-fetched"]` → `2026-10-06T12:32:10Z`), and
-  `GET https://localhost:8081/_emulator/status` returns JSON with `lastFetch`,
-  `activeSnapshot`, `localChanges`, the databases and containers, e.g. to log it at startup:
+**TLS certificate.** If the ASP.NET Core development certificate is installed and trusted
+(`dotnet dev-certs https --trust`), DbEmulator uses it and no further configuration is needed. Otherwise it generates
+a self-signed certificate, and the connection string shown in the application includes
+`DisableServerCertificateValidation=True`.
 
-  ```csharp
-  using var http = new HttpClient();
-  var status = await http.GetFromJsonAsync<JsonElement>("https://localhost:8081/_emulator/status");
-  logger.LogInformation("Cosmos: DbEmulator copy fetched {When}", status.GetProperty("lastFetch").GetProperty("completedUtc"));
-  ```
+**Identifying the data version.** Every response includes an `x-dbemulator-data-fetched` header containing the UTC time
+of the fetch (for example `itemResponse.Headers["x-dbemulator-data-fetched"]`). A JSON status document is available at
+`GET https://localhost:8081/_emulator/status`, including `lastFetch`, `activeSnapshot`, `localChanges` and the list of
+databases and containers. For example, to log it at start-up:
 
-## How "never writes to Cosmos DB" is guaranteed
+```csharp
+using var http = new HttpClient();
+var status = await http.GetFromJsonAsync<JsonElement>("https://localhost:8081/_emulator/status");
+logger.LogInformation("Cosmos: DbEmulator copy fetched {When}",
+    status.GetProperty("lastFetch").GetProperty("completedUtc"));
+```
 
-Independent layers, any one of which is enough on its own:
+## Read-only guarantee
 
-1. **Azure-enforced**: use the account's *read-only key* or an Entra ID identity that only has the
-   *Cosmos DB Built-in Data Reader* role. Azure itself rejects writes made with these.
-2. **Guard in the HTTP pipeline** (`src/DbEmulator/Sync/ReadOnlyGuard.cs`): every request to Azure passes through
-   `ReadOnlyGuardHandler`. Only `GET`/`HEAD` and `POST` *queries* (`application/query+json`, flagged as a query) are
-   let through; `PUT`, `PATCH`, `DELETE`, creates, upserts, batches and stored procedure execution are refused
-   **before they leave the machine** — even with a read-write key. A self-test of the guard runs before every fetch
-   and the fetch aborts if it fails.
-3. **Gateway mode only**: the fetch client is forced into Gateway mode, so there are no Direct-mode TCP connections
-   that could bypass the HTTP guard.
-4. **Separation**: the fetch code only calls read-feed APIs, and the local server never touches the Azure client.
+DbEmulator uses several independent safeguards, each sufficient on its own:
 
-The test suite checks this end to end: `FetchTests` runs a fetch against a second emulator that plays "live" and
-asserts it received nothing but reads, and attempts 11 kinds of writes through the guarded client (create, upsert,
-replace, delete, patch, stored procedure, batch, delete container, change throughput, create/delete database) and
-asserts every one was blocked. Each fetch also logs `readRequests=… blockedWrites=0` in `data\logs\fetch-history.log`.
+1. **Azure-enforced permissions.** With a read-only key or an identity that has only the *Cosmos DB Built-in Data
+   Reader* role, Azure itself rejects any write.
+2. **Request guard.** Every request to Azure passes through `ReadOnlyGuardHandler`
+   ([`src/DbEmulator/Sync/ReadOnlyGuard.cs`](src/DbEmulator/Sync/ReadOnlyGuard.cs)). Only `GET`, `HEAD` and query
+   `POST` requests are allowed. Creates, upserts, replaces, patches, deletes, batches and stored-procedure execution
+   are rejected **before they leave the machine**, even when a read-write key is used. The guard runs a self-test
+   before every fetch, and the fetch is aborted if the self-test fails.
+3. **Gateway mode only.** The client that reads from Azure is restricted to Gateway mode, so no Direct-mode TCP
+   connection can bypass the guard.
+4. **Separation of concerns.** The fetch path uses read APIs only, and the local server has no access to the Azure
+   client.
 
-## Backups
+These guarantees are covered by automated tests. `FetchTests` runs a complete fetch against a second emulator instance
+acting as the live account and verifies that it receives only read requests. It also attempts eleven kinds of write
+through the guarded client (create, upsert, replace, delete, patch, stored procedure, transactional batch, delete
+container, replace throughput, create database, delete database) and verifies that each one is blocked. Each fetch
+records `readRequests=… blockedWrites=0` in `data\logs\fetch-history.log`.
 
-Every fetch is stored as a complete, self-describing snapshot:
+## Data storage and backups
+
+Each fetch produces a complete, self-describing snapshot:
 
 ```
 data\
   snapshots\2026-10-06T12-32-10Z\
-    manifest.json                       when, from where, counts, request charge
+    manifest.json                                         time, source, counts, request charge
     dbs\000-shop\database.json
-    dbs\000-shop\colls\000-orders\container.json            partition key, indexing policy, unique keys, ...
-    dbs\000-shop\colls\000-orders\documents.jsonl           one document per line (exactly as stored in Azure)
-    dbs\000-shop\colls\000-orders\storedProcedures.json     triggers.json, userDefinedFunctions.json
-  working\                              your app's local changes on top of the snapshot being served
-  logs\fetch-history.log                every fetch attempt (time, result, documents, RU)
-  settings.json                         what you changed under Settings
+    dbs\000-shop\colls\000-orders\container.json          partition key, indexing policy, unique keys
+    dbs\000-shop\colls\000-orders\documents.jsonl         one document per line, as stored in Azure
+    dbs\000-shop\colls\000-orders\storedProcedures.json   also triggers.json, userDefinedFunctions.json
+  working\                                                local changes on top of the served snapshot
+  logs\fetch-history.log                                  every fetch attempt and its result
+  settings.json                                           settings changed in the application
   state.json, source.dat (encrypted), certs\
 ```
 
-- The newest `Storage:KeepSnapshots` fetches (default 10) are kept; `0` keeps everything.
-- Serve an older backup from the **Backups** screen.
-- Local changes are journaled in `working\journal-*.jsonl`; when the journal grows large it is folded into a
-  `working\checkpoint-*` folder at startup. Neither ever modifies the fetched snapshots, and `working\working.json`
-  records which files are current.
-- The files are plain, readable JSON lines (text such as `é` or `😀` is kept as-is, not escaped), so you can open
-  them in any editor and use them without this tool. Turn on *Settings → Backups → Compress* (`Storage:CompressSnapshots`)
-  to gzip them (`documents.jsonl.gz`) and save disk space; both kinds can be served.
-- A failed or cancelled fetch never replaces the copy you are working with. Every snapshot is checked against its
-  manifest when loaded; a damaged one is reported and the previous backup is served instead.
+- **Format.** Documents are stored as JSON Lines, one document per line, with text kept exactly as returned by
+  Cosmos DB (non-ASCII characters are not escaped). The files can be opened in any text editor or processed by other
+  tools. Optional gzip compression (`documents.jsonl.gz`) is available under **Settings → Backups**; compressed and
+  uncompressed snapshots can both be served.
+- **Retention.** The ten most recent snapshots are kept by default (`Storage:KeepSnapshots`; `0` keeps all). The
+  snapshot currently being served is never removed.
+- **Integrity.** A failed or cancelled fetch never replaces the data you are working with. Each snapshot is verified
+  against its manifest when loaded; if it is damaged, DbEmulator reports this and serves the previous snapshot.
+- **Local changes.** Writes from your application are recorded in a journal (`working\journal-*.jsonl`) and are
+  consolidated into a checkpoint at start-up once the journal grows large. Snapshots themselves are never modified.
+- **Runtime.** While running, the served copy is held in memory.
 
 ## Configuration
 
-Most settings are changed in the app (*Settings*) and saved to `data\settings.json`. Defaults come from
-`appsettings.json` next to the exe; `data\settings.json` overrides them, and `DBEMULATOR_<Section>__<Key>` environment
-variables override both.
+Most settings can be changed on the **Settings** page and are saved to `data\settings.json`. Settings are resolved in
+the following order, with later sources taking precedence:
 
-| Setting | Default | |
+1. `appsettings.json` next to the executable
+2. `data\settings.json`
+3. Environment variables named `DBEMULATOR_<Section>__<Key>` (for example `DBEMULATOR_Server__Port=8082`)
+
+| Setting | Default | Description |
 |---|---|---|
-| `Source:Authentication` | `Key` | `Key` (connection string entered in the app) or `EntraId` |
-| `Source:AccountEndpoint` / `TenantId` | | For `EntraId` |
-| `Source:Databases` | `[]` | Databases to copy; empty = all |
-| `Source:ExcludeContainers` | `[]` | `"database/container"` entries to skip |
+| `Source:Authentication` | `Key` | `Key` (connection string entered in the application) or `EntraId` |
+| `Source:AccountEndpoint`, `Source:TenantId` | — | Account endpoint and optional tenant for `EntraId` |
+| `Source:Databases` | `[]` | Databases to copy; empty copies all (names are case-sensitive) |
+| `Source:ExcludeContainers` | `[]` | Containers to skip, as `"database/container"` |
 | `Source:PageSize` | `1000` | Documents per read request |
-| `Server:Port` | `8081` | Same as the official emulator (stop that one, or pick another port) |
-| `Server:UseHttps` / `HttpPort` | `true` / `0` | Optional extra plain-HTTP port |
+| `Server:Port` | `8081` | HTTPS port of the local endpoint |
+| `Server:UseHttps`, `Server:HttpPort` | `true`, `0` | Optional additional plain-HTTP port (`0` = disabled) |
 | `Server:AllowLocalWrites` | `true` | `false` serves the copy read-only |
-| `Server:LogRequests` | `false` | Also toggled on the **Activity** screen |
-| `Server:EnforceTtl` | `false` | Hide documents whose `ttl`/`defaultTtl` has passed, like Azure (off: fetched data never disappears locally) |
-| `Storage:DataDirectory` | `data` | Relative to the exe |
-| `Storage:KeepSnapshots` | `10` | `0` = keep all |
-| `Storage:CompressSnapshots` | `false` | gzip `documents.jsonl` |
-| `Fetch:OnStartupIfOlderThanHours` | `0` | Fetch at startup when the copy is older than this |
-| `Fetch:AutoFetchEveryHours` | `0` | Fetch periodically while running (replaces local changes) |
-| `App:CloseToTray` | `true` | Closing the window keeps DbEmulator running in the tray |
+| `Server:LogRequests` | `false` | Log each request on the **Activity** page |
+| `Server:EnforceTtl` | `false` | Hide documents whose time-to-live has expired, as Azure does. When off, fetched data never expires locally |
+| `Storage:DataDirectory` | `data` | Data folder, relative to the executable |
+| `Storage:KeepSnapshots` | `10` | Number of snapshots to keep; `0` keeps all |
+| `Storage:CompressSnapshots` | `false` | Store documents gzip-compressed |
+| `Fetch:OnStartupIfOlderThanHours` | `0` | Fetch at start-up when the copy is older than this; `0` = disabled |
+| `Fetch:AutoFetchEveryHours` | `0` | Fetch periodically while running; `0` = disabled. Replaces local changes |
+| `App:CloseToTray` | `true` | Keep running in the system tray when the window is closed |
 
-The source connection string can also come from the `DBEMULATOR_SOURCE_CONNECTION_STRING` environment variable.
+The source connection string can also be provided through the `DBEMULATOR_SOURCE_CONNECTION_STRING` environment
+variable.
 
-### Command line
+Automatic fetches wait at least one hour after a failed attempt before retrying, so a persistent error cannot cause
+repeated full reads of the live account. A fetch that finds no databases fails rather than creating an empty
+snapshot.
 
-Double-clicking (no arguments) opens the desktop app. For scripts and servers:
+## Command-line options
 
-| | |
+Without arguments, DbEmulator starts the desktop application. The following options are available for scripting and
+automation:
+
+| Option | Description |
 |---|---|
-| `--console` | The classic text dashboard in a console window (keyboard shortcuts: **F** fetch, **R** reset, **B** backups, **Q** quit, …) |
-| `--headless` | Run without any window (e.g. on a build agent); use the browser page or JSON API, stop with Ctrl+C |
-| `--fetch-only` | Save a fresh backup and exit — e.g. a nightly Windows Task Scheduler job. It does not touch what is being served or your local changes |
-| `--fetch` | Console mode, fetching at startup |
-| `--port <n>`, `--data <folder>` | Override the port or data folder |
-| `--help` | All options |
+| `--console` | Run with a text-based console dashboard instead of the desktop window |
+| `--headless` | Run without a window, for example on a build agent. Use the browser interface or the status API; stop with `Ctrl+C` |
+| `--fetch-only` | Fetch a new snapshot and exit, for example as a scheduled task. Does not change the snapshot being served or local changes |
+| `--fetch` | Start in console mode and fetch immediately |
+| `--port <n>` | Override the HTTPS port |
+| `--data <folder>` | Use a different data folder |
+| `--help` | Show all options |
 
-One DbEmulator runs per data folder; starting it again shows the running window instead.
+## Compatibility
 
-Automatic fetches (`Fetch:*`) wait at least an hour after a failed attempt before trying again, so a persistent error
-never turns into repeated full reads of the live account. A fetch that finds no databases (e.g. a typo in
-`Source:Databases`; names are case-sensitive) fails instead of creating an empty backup.
+**Supported:** databases and containers (including hierarchical partition keys and unique keys); point reads and
+writes with ETags, `IfNoneMatch` and `EnableContentResponseOnWrite = false`; patch (including conditional patch);
+transactional batch; bulk execution (`AllowBulkExecution`); SQL and LINQ queries (filters, projections, `ORDER BY`,
+`TOP`, `OFFSET`/`LIMIT`, `DISTINCT`, aggregates, `GROUP BY`, `JOIN`, subqueries, parameters and built-in functions);
+continuation tokens; `ReadMany`; read feed; change feed (latest-version mode); stored procedure, trigger and UDF
+definitions; throughput reads and updates.
 
-## What is supported
+**Limitations:**
 
-Databases, containers (incl. hierarchical partition keys, unique keys), point reads/writes with ETags,
-`IfNoneMatch`, `EnableContentResponseOnWrite=false`, patch (incl. conditional), **TransactionalBatch**,
-**bulk mode** (`AllowBulkExecution`), queries (SQL and LINQ: filters, projections, ORDER BY, TOP, OFFSET/LIMIT,
-DISTINCT, aggregates, GROUP BY, JOIN, subqueries, parameters, built-in functions), continuation tokens (including
-resuming a query from a token in a later request), ReadMany, read feed, change feed (latest version), stored
-procedure/trigger/UDF definitions, throughput reads/updates.
+- Gateway mode only. Direct mode is rejected with a descriptive error.
+- Stored procedures, triggers and user-defined functions are copied and stored but not executed.
+- TTL is enforced only when `Server:EnforceTtl` is enabled. Indexing policies are not applied, so queries that would
+  require a composite index in Azure succeed locally.
+- Change feed supports latest-version mode only (not *all versions and deletes*). Spatial functions and full-text
+  ranking are not supported.
+- Each container is a single partition key range. Consistency levels are not simulated, and request charges are
+  approximate.
+- The served copy is held in memory, using roughly two to three times the size of the JSON data.
+- Each fetch reads every document in the selected databases and consumes request units on the live account. The
+  total is shown after each fetch and recorded in the snapshot manifest.
 
-## Limitations
+## Security considerations
 
-- **Gateway mode only.** Direct mode fails with a clear error message.
-- Stored procedures, triggers and UDFs are copied and stored but **not executed**.
-- **TTL** is only enforced with `Server:EnforceTtl=true`. Indexing policies are not applied (queries that would need
-  a composite index in Azure simply work).
-- Change feed: latest-version mode only (no "all versions and deletes"). Spatial functions and full-text ranking are
-  not supported.
-- Every container is one partition key range; consistency levels are not simulated; request charges are approximate.
-- Data is held in memory (roughly 2–3× the JSON size). Each fetch reads every document, which costs RUs on the
-  live account; the RU total is shown after the fetch and recorded in the manifest.
+- The data folder contains a **copy of production data**. It is excluded by `.gitignore`. Store it only in locations
+  you would trust with production data.
+- The local server listens on localhost only, rejects requests addressed to other host names (DNS rebinding
+  protection) and requires an `Authorization` header on Cosmos DB requests. Actions in the browser interface require
+  a custom request header, so other websites cannot trigger them. The desktop window communicates with DbEmulator
+  in-process, not over the network.
+- Any account key is accepted. Other users who can run programs on the same machine (for example on a shared or
+  remote-desktop host) can read the copy while DbEmulator is running.
 
-## Security notes
+## Building from source
 
-- The data folder contains a **copy of production data**. It is excluded in `.gitignore`; keep it out of shared
-  folders and backups you would not trust with production data.
-- The server only listens on localhost, only accepts connections from this machine, rejects requests addressed to
-  other host names (DNS rebinding) and requires an `Authorization` header on Cosmos requests (a web page cannot forge
-  one). Actions on the browser page require a custom header, so other web pages cannot trigger them. The desktop
-  window talks to DbEmulator directly, not over the network.
-- Any key is accepted, so anyone who can run programs on this machine (e.g. other users of a shared or remote-desktop
-  machine) can read the copy while DbEmulator runs.
-
-## Development
+Requires the .NET 10 SDK.
 
 ```powershell
-dotnet test DbEmulator.slnx        # unit tests + end-to-end tests with the real Cosmos SDK
-dotnet run --project src/DbEmulator
+dotnet test DbEmulator.slnx           # unit tests and end-to-end tests using the Cosmos DB SDK
+dotnet run --project src/DbEmulator   # run from source
+.\publish.ps1                         # run the tests and produce a self-contained dist\DbEmulator.exe
 ```
 
-- `src/DbEmulator.Query` — Cosmos SQL parser and evaluator.
-- `src/DbEmulator` — gateway (Cosmos REST protocol), storage (snapshots, journal), read-only fetch, app logic (`App\`),
-  desktop window (`Gui\`, WinForms + WebView2) and the HTML/CSS/JS interface it shows (`Gui\ui\`, also served at
-  `/_emulator/`), console UI.
-- `tests/` — query engine tests, storage/guard tests, SDK compatibility tests, end-to-end fetch tests.
+| Path | Contents |
+|---|---|
+| `src/DbEmulator.Query` | Cosmos DB SQL parser and query engine |
+| `src/DbEmulator` | Protocol gateway, storage (snapshots and journal), read-only fetch, application logic (`App`), desktop window (`Gui`, WinForms and WebView2) and the web interface (`Gui/ui`) |
+| `tests/DbEmulator.Query.Tests` | Query engine tests |
+| `tests/DbEmulator.Tests` | Storage, read-only guard, hosting, SDK compatibility and end-to-end fetch tests |
